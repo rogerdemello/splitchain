@@ -1,0 +1,18 @@
+# Render blueprint — one web service serving the Next.js UI (via a small Express
+# host). Import this repo on https://render.com and it auto-detects.
+services:
+  - type: web
+    name: splitchain
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Deployed SplitChain contract address on Monad testnet.
+      # NEXT_PUBLIC_* is inlined at build time, so a redeploy is needed on change.
+      - key: NEXT_PUBLIC_SPLITCHAIN_ADDRESS
+        sync: false
+      - key: NODE_VERSION
+        value: "20"

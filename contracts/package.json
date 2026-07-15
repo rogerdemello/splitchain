@@ -1,0 +1,17 @@
+{
+  "name": "splitchain-contracts",
+  "version": "1.0.0",
+  "private": true,
+  "description": "SplitChain — on-chain group expense splitter (Monad testnet)",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy": "hardhat run scripts/deploy.js --network monadTestnet",
+    "export-abi": "hardhat run scripts/export-abi.js"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "dotenv": "^16.4.7",
+    "hardhat": "^2.22.17"
+  }
+}
