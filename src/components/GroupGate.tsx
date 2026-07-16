@@ -5,6 +5,7 @@ import { useAccount } from "wagmi";
 import { Plus, X, Users, ArrowRight, FolderOpen } from "lucide-react";
 import { useCreateGroup, groupIdFromLogs } from "@/lib/web3/hooks";
 import { TxStatus } from "@/components/TxStatus";
+import { logActivity } from "@/lib/activity";
 import { isAddress, shortAddress, sameAddress } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
@@ -25,9 +26,20 @@ export function GroupGate({ onGroupReady }: GroupGateProps) {
   useEffect(() => {
     if (create.isConfirmed && create.receipt) {
       const gid = groupIdFromLogs(create.receipt.logs);
-      if (gid !== undefined) onGroupReady(gid);
+      if (gid !== undefined) {
+        if (create.hash) {
+          logActivity(gid, {
+            id: `${create.hash}-create`,
+            kind: "create",
+            txHash: create.hash,
+            ts: Date.now(),
+            member: address,
+          });
+        }
+        onGroupReady(gid);
+      }
     }
-  }, [create.isConfirmed, create.receipt, onGroupReady]);
+  }, [create.isConfirmed, create.receipt, create.hash, onGroupReady, address]);
 
   const addMember = () => {
     setInputErr(null);
@@ -49,8 +61,9 @@ export function GroupGate({ onGroupReady }: GroupGateProps) {
   };
 
   const submit = async () => {
-    if (!name.trim() || members.length === 0) return;
+    if (!name.trim()) return;
     try {
+      // Members are optional — you can create solo and invite via link later.
       await create.createGroup(name.trim(), members as `0x${string}`[]);
     } catch {
       /* surfaced via create.error */
@@ -83,7 +96,7 @@ export function GroupGate({ onGroupReady }: GroupGateProps) {
         />
 
         <label className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
-          Friends (wallet addresses)
+          Friends (optional — or invite them with a link later)
         </label>
         <div className="flex gap-2">
           <input
@@ -123,10 +136,10 @@ export function GroupGate({ onGroupReady }: GroupGateProps) {
         <button
           type="button"
           onClick={submit}
-          disabled={busy || !name.trim() || members.length === 0}
+          disabled={busy || !name.trim()}
           className={cn(
             "mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition",
-            busy || !name.trim() || members.length === 0
+            busy || !name.trim()
               ? "cursor-not-allowed bg-slate-300 dark:bg-slate-700"
               : "bg-brand-500 hover:bg-brand-600"
           )}

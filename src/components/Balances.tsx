@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useAccount } from "wagmi";
 import { ArrowRight, Scale, PartyPopper, Zap } from "lucide-react";
-import { simplifyDebts } from "@/lib/web3/simplify";
+import { simplifyDebts, type Transfer } from "@/lib/web3/simplify";
 import { SettleButton } from "@/components/SettleButton";
 import { TxStatus } from "@/components/TxStatus";
 import { useSettleMany } from "@/lib/web3/hooks";
 import { usePrice, formatUsd } from "@/lib/web3/price";
+import { logActivity } from "@/lib/activity";
 import { formatMon, sameAddress } from "@/lib/format";
 import { Identity } from "@/components/Identity";
 import { cn } from "@/lib/cn";
@@ -41,17 +42,30 @@ export function Balances({ groupId, members, balances, onSettled }: BalancesProp
   );
 
   const batch = useSettleMany();
+  const batchedRef = useRef<Transfer[]>([]);
   useEffect(() => {
-    if (batch.isConfirmed) {
+    if (batch.isConfirmed && batch.hash) {
+      for (const t of batchedRef.current) {
+        logActivity(groupId, {
+          id: `${batch.hash}-settle-${t.to}`,
+          kind: "settle",
+          txHash: batch.hash,
+          ts: Date.now(),
+          from: address,
+          to: t.to,
+          amount: t.amount.toString(),
+        });
+      }
       onSettled();
       const t = setTimeout(() => batch.reset(), 1500);
       return () => clearTimeout(t);
     }
-  }, [batch.isConfirmed, batch, onSettled]);
+  }, [batch.isConfirmed, batch, onSettled, groupId, address]);
 
   const usd = (wei: bigint) => (price ? formatUsd(price.weiToUsd(wei)) : "");
 
   const settleAll = async () => {
+    batchedRef.current = myTransfers;
     await batch.settleMany(
       groupId,
       myTransfers.map((t) => t.to as `0x${string}`),

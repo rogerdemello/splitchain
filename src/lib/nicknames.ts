@@ -12,6 +12,7 @@ import { useSyncExternalStore } from "react";
 const KEY = "splitchain:nicknames";
 type Book = Record<string, string>;
 
+const EMPTY: Book = {}; // stable server snapshot (avoids useSyncExternalStore warning)
 let book: Book = load();
 const listeners = new Set<() => void>();
 
@@ -58,7 +59,7 @@ export function useNicknames(): Book {
   return useSyncExternalStore(
     subscribe,
     () => book,
-    () => ({})
+    () => EMPTY
   );
 }
 

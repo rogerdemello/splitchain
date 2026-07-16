@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAccount } from "wagmi";
 import { Receipt, ArrowRight, Camera } from "lucide-react";
 import { useAddExpense } from "@/lib/web3/hooks";
@@ -8,6 +8,7 @@ import { usePrice, formatUsd } from "@/lib/web3/price";
 import { TxStatus } from "@/components/TxStatus";
 import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { Identity } from "@/components/Identity";
+import { logActivity } from "@/lib/activity";
 import { monToWei, formatMon, sameAddress } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
@@ -35,6 +36,7 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
   const [scanning, setScanning] = useState(false);
 
   const add = useAddExpense();
+  const lastRef = useRef<{ wei: bigint; description: string } | null>(null);
 
   // Default: everyone shares the expense.
   useEffect(() => {
@@ -43,13 +45,24 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
 
   useEffect(() => {
     if (add.isConfirmed) {
+      if (add.hash && lastRef.current) {
+        logActivity(groupId, {
+          id: `${add.hash}-expense`,
+          kind: "expense",
+          txHash: add.hash,
+          ts: Date.now(),
+          payer: address,
+          amount: lastRef.current.wei.toString(),
+          description: lastRef.current.description,
+        });
+      }
       setAmount("");
       setDescription("");
       onAdded();
       const t = setTimeout(() => add.reset(), 1500);
       return () => clearTimeout(t);
     }
-  }, [add.isConfirmed, add, onAdded]);
+  }, [add.isConfirmed, add, onAdded, groupId, address]);
 
   const participants = useMemo(
     () => members.filter((m) => selected[m.toLowerCase()]),
@@ -82,12 +95,14 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
     setFormErr(null);
     try {
       if (!resolved) throw new Error("Enter an amount and pick participants");
+      const desc = description.trim() || "Expense";
+      lastRef.current = { wei: resolved.wei, description: desc };
       await add.addExpense(
         groupId,
         resolved.wei,
         participants as `0x${string}`[],
         resolved.shares,
-        description.trim() || "Expense",
+        desc,
         resolved.usdCents
       );
     } catch (e) {

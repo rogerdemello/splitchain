@@ -19,7 +19,12 @@ import { ExpenseForm } from "@/components/ExpenseForm";
 import { Balances } from "@/components/Balances";
 import { ExpenseHistory } from "@/components/ExpenseHistory";
 import { Insights } from "@/components/Insights";
+import { Activity } from "@/components/Activity";
+import { GroupList } from "@/components/GroupList";
+import { InviteModal } from "@/components/InviteModal";
 import { TxStatus } from "@/components/TxStatus";
+import { rememberGroup } from "@/lib/groups";
+import { logActivity } from "@/lib/activity";
 import {
   useGroupBalances,
   useGroupInfo,
@@ -36,11 +41,12 @@ export default function Home() {
   const price = usePrice();
   const [groupId, setGroupId] = useState<bigint | null>(null);
   const [copied, setCopied] = useState(false);
-  const [inviteCopied, setInviteCopied] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
 
   const selectGroup = useCallback((id: bigint) => {
     setGroupId(id);
     localStorage.setItem("splitchain:group", id.toString());
+    rememberGroup(id);
   }, []);
 
   // Restore last group, or open one from an ?join=<id> invite link.
@@ -88,11 +94,20 @@ export default function Home() {
   const join = useJoinGroup();
   useEffect(() => {
     if (join.isConfirmed) {
+      if (join.hash && groupId !== null) {
+        logActivity(groupId, {
+          id: `${join.hash}-join`,
+          kind: "join",
+          txHash: join.hash,
+          ts: Date.now(),
+          member: address,
+        });
+      }
       refetchAll();
       const t = setTimeout(() => join.reset(), 1500);
       return () => clearTimeout(t);
     }
-  }, [join.isConfirmed, join, refetchAll]);
+  }, [join.isConfirmed, join, refetchAll, groupId, address]);
 
   const bData = balancesQ.data as
     | readonly [readonly `0x${string}`[], readonly bigint[]]
@@ -125,13 +140,6 @@ export default function Home() {
 
   const groupNotFound =
     groupId !== null && !balancesQ.isLoading && balancesQ.isError;
-
-  const copyInvite = () => {
-    if (groupId === null) return;
-    navigator.clipboard.writeText(`${window.location.origin}/?join=${groupId.toString()}`);
-    setInviteCopied(true);
-    setTimeout(() => setInviteCopied(false), 1500);
-  };
 
   return (
     <div className="min-h-screen">
@@ -192,6 +200,7 @@ export default function Home() {
             <p className="mb-6 text-center text-sm text-slate-500 dark:text-slate-400">
               Create a group for your trip or flat, or open one you&apos;re already in.
             </p>
+            <GroupList onOpen={selectGroup} />
             <GroupGate onGroupReady={selectGroup} />
           </section>
         ) : groupNotFound ? (
@@ -229,11 +238,10 @@ export default function Home() {
                   </p>
                   <button
                     type="button"
-                    onClick={copyInvite}
+                    onClick={() => setShowInvite(true)}
                     className="inline-flex items-center gap-1 text-xs font-medium text-brand-500 hover:text-brand-600"
                   >
-                    {inviteCopied ? <Check className="h-3 w-3" /> : <Share2 className="h-3 w-3" />}
-                    {inviteCopied ? "Link copied" : "Invite"}
+                    <Share2 className="h-3 w-3" /> Invite
                   </button>
                 </div>
               </div>
@@ -300,11 +308,16 @@ export default function Home() {
                   onSettled={refetchAll}
                 />
                 <Insights members={members} expenses={expenses} />
+                <Activity groupId={groupId} />
               </div>
             </div>
           </section>
         )}
       </main>
+
+      {showInvite && groupId !== null && (
+        <InviteModal groupId={groupId} onClose={() => setShowInvite(false)} />
+      )}
 
       <footer className="mx-auto max-w-5xl px-4 py-8 text-center text-xs text-slate-400 sm:px-6">
         {isContractConfigured ? (

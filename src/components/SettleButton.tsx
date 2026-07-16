@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect } from "react";
+import { useAccount } from "wagmi";
 import { HandCoins } from "lucide-react";
 import { useSettle } from "@/lib/web3/hooks";
 import { TxStatus } from "@/components/TxStatus";
+import { logActivity } from "@/lib/activity";
 import { formatMon } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
@@ -16,15 +18,25 @@ interface SettleButtonProps {
 
 /** Fires a REAL payable settle() tx — msg.value MON actually moves to `to`. */
 export function SettleButton({ groupId, to, amount, onSettled }: SettleButtonProps) {
+  const { address } = useAccount();
   const s = useSettle();
 
   useEffect(() => {
-    if (s.isConfirmed) {
+    if (s.isConfirmed && s.hash) {
+      logActivity(groupId, {
+        id: `${s.hash}-settle-${to}`,
+        kind: "settle",
+        txHash: s.hash,
+        ts: Date.now(),
+        from: address,
+        to,
+        amount: amount.toString(),
+      });
       onSettled();
       const t = setTimeout(() => s.reset(), 2000);
       return () => clearTimeout(t);
     }
-  }, [s.isConfirmed, s, onSettled]);
+  }, [s.isConfirmed, s, onSettled, groupId, to, amount, address]);
 
   const busy = s.isPending || s.isConfirming;
 

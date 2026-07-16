@@ -7,6 +7,7 @@ import { useAddExpense } from "@/lib/web3/hooks";
 import { usePrice, formatUsd } from "@/lib/web3/price";
 import { TxStatus } from "@/components/TxStatus";
 import { Identity } from "@/components/Identity";
+import { logActivity } from "@/lib/activity";
 import { formatMon, monToWei, sameAddress } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
@@ -19,11 +20,14 @@ interface ReceiptScannerProps {
 
 interface ScanItem {
   name: string;
-  amount: number;
+  amount: number; // in the receipt's own currency — used only as a split WEIGHT
   assignee: string; // member address, or "all"
 }
 
-/** Downscale + JPEG-compress an image file so its base64 stays under NIM's limit. */
+// Keep the base64 payload comfortably under the server's MAX_B64 (180k).
+const B64_TARGET = 165_000;
+
+/** Downscale + JPEG-compress an image so its base64 stays under the server limit. */
 async function compress(file: File): Promise<{ b64: string; mime: string }> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const r = new FileReader();
@@ -37,21 +41,30 @@ async function compress(file: File): Promise<{ b64: string; mime: string }> {
     im.onerror = reject;
     im.src = dataUrl;
   });
-  const maxDim = 1100;
-  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-  const w = Math.round(img.width * scale);
-  const h = Math.round(img.height * scale);
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
-  let q = 0.8;
-  let out = canvas.toDataURL("image/jpeg", q);
-  while (out.length > 175_000 * 1.37 && q > 0.3) {
-    q -= 0.12;
-    out = canvas.toDataURL("image/jpeg", q);
+
+  const b64Len = (out: string) => out.length - (out.indexOf(",") + 1);
+
+  // Try progressively smaller dimensions until the base64 fits under the limit.
+  for (const maxDim of [1100, 900, 750, 600, 500]) {
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+
+    let q = 0.82;
+    let out = canvas.toDataURL("image/jpeg", q);
+    while (b64Len(out) > B64_TARGET && q > 0.35) {
+      q -= 0.12;
+      out = canvas.toDataURL("image/jpeg", q);
+    }
+    if (b64Len(out) <= B64_TARGET) {
+      return { b64: out.slice(out.indexOf(",") + 1), mime: "image/jpeg" };
+    }
   }
-  return { b64: out.replace(/^data:[^,]+,/, ""), mime: "image/jpeg" };
+  throw new Error("Image is too large even after compression — try a smaller photo.");
 }
 
 /** Distribute `total` wei across weights so the shares sum EXACTLY to total. */
@@ -60,10 +73,7 @@ function sharesFromWeights(total: bigint, weights: bigint[]): bigint[] {
   if (wsum === 0n) return weights.map(() => 0n);
   const out = weights.map((w) => (total * w) / wsum);
   let rem = total - out.reduce((a, b) => a + b, 0n);
-  // Hand the rounding remainder to the largest-weight participants.
-  const order = weights
-    .map((w, i) => ({ w, i }))
-    .sort((a, b) => (b.w > a.w ? 1 : -1));
+  const order = weights.map((w, i) => ({ w, i })).sort((a, b) => (b.w > a.w ? 1 : -1));
   let k = 0;
   while (rem > 0n && order.length) {
     out[order[k % order.length].i] += 1n;
@@ -82,9 +92,11 @@ export function ReceiptScanner({ groupId, members, onAdded, onClose }: ReceiptSc
   const [items, setItems] = useState<ScanItem[] | null>(null);
   const [currency, setCurrency] = useState("USD");
   const [unit, setUnit] = useState<"USD" | "MON">("USD");
+  const [billTotal, setBillTotal] = useState(""); // what to actually charge, in `unit`
   const [description, setDescription] = useState("Receipt");
 
   const add = useAddExpense();
+  const lastRef = useRef<{ wei: bigint; description: string } | null>(null);
 
   const pick = () => fileRef.current?.click();
 
@@ -111,80 +123,103 @@ export function ReceiptScanner({ groupId, members, onAdded, onClose }: ReceiptSc
         return;
       }
       const cur = String(data.currency || "USD").toUpperCase();
+      const scanned = (data.items as { name: string; amountUsd: number }[]).map((it) => ({
+        name: it.name,
+        amount: Number(it.amountUsd) || 0,
+        assignee: "all" as const,
+      }));
+      const sum = scanned.reduce((a, b) => a + b.amount, 0);
       setCurrency(cur);
       setUnit(cur === "USD" ? "USD" : "MON");
-      setDescription(`Receipt · ${data.items.length} items`);
-      setItems(
-        (data.items as { name: string; amountUsd: number }[]).map((it) => ({
-          name: it.name,
-          amount: Number(it.amountUsd) || 0,
-          assignee: "all",
-        }))
-      );
-    } catch {
-      setErr("Something went wrong scanning the image.");
+      setDescription(`Receipt · ${scanned.length} items`);
+      setBillTotal(String(Number(data.total) || sum || ""));
+      setItems(scanned);
+    } catch (e2) {
+      setErr(e2 instanceof Error ? e2.message : "Something went wrong scanning the image.");
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
     }
   };
 
-  // Per-member numeric subtotal from the current assignments.
-  const subtotals = new Map<string, number>();
-  const n = members.length;
+  // Per-member weight (their numeric share of the items).
+  const weights = new Map<string, number>();
+  const n = members.length || 1;
   for (const it of items ?? []) {
     if (it.assignee === "all") {
       const each = it.amount / n;
-      for (const m of members) subtotals.set(m.toLowerCase(), (subtotals.get(m.toLowerCase()) ?? 0) + each);
+      for (const m of members)
+        weights.set(m.toLowerCase(), (weights.get(m.toLowerCase()) ?? 0) + each);
     } else {
-      subtotals.set(it.assignee.toLowerCase(), (subtotals.get(it.assignee.toLowerCase()) ?? 0) + it.amount);
+      weights.set(it.assignee.toLowerCase(), (weights.get(it.assignee.toLowerCase()) ?? 0) + it.amount);
     }
   }
-  const totalNum = (items ?? []).reduce((a, b) => a + b.amount, 0);
+  const weightSum = (items ?? []).reduce((a, b) => a + b.amount, 0);
 
-  const totalWei =
-    unit === "MON"
+  const billNum = Number(billTotal);
+  const validTotal = Number.isFinite(billNum) && billNum > 0;
+
+  const totalWei = !validTotal
+    ? 0n
+    : unit === "MON"
       ? (() => {
           try {
-            return monToWei(totalNum.toFixed(6));
+            return monToWei(billTotal);
           } catch {
             return 0n;
           }
         })()
-      : price.usdToWei(totalNum);
-  const usdCents = unit === "USD" ? BigInt(Math.round(totalNum * 100)) : 0n;
+      : price.usdToWei(billNum);
+  const usdCents = unit === "USD" && validTotal ? BigInt(Math.round(billNum * 100)) : 0n;
+
+  // Each member's portion of the chosen total, scaled by their item weight.
+  const portionOf = (m: string) => {
+    if (weightSum <= 0) return 0;
+    return (billNum * (weights.get(m.toLowerCase()) ?? 0)) / weightSum;
+  };
 
   const create = async () => {
     setErr(null);
     try {
       const parts: `0x${string}`[] = [];
-      const weights: bigint[] = [];
+      const w: bigint[] = [];
       for (const m of members) {
-        const sub = subtotals.get(m.toLowerCase()) ?? 0;
-        if (sub > 0) {
+        const wt = weights.get(m.toLowerCase()) ?? 0;
+        if (wt > 0) {
           parts.push(m);
-          // integer micro-weights preserve proportions without float drift
-          weights.push(BigInt(Math.round(sub * 1_000_000)));
+          w.push(BigInt(Math.round(wt * 1_000_000)));
         }
       }
-      if (parts.length === 0 || totalWei === 0n) throw new Error("Nothing to split");
-      const shares = sharesFromWeights(totalWei, weights);
-      await add.addExpense(groupId, totalWei, parts, shares, description.trim() || "Receipt", usdCents);
+      if (parts.length === 0 || totalWei === 0n) throw new Error("Enter a bill total and assign items");
+      const shares = sharesFromWeights(totalWei, w);
+      const desc = description.trim() || "Receipt";
+      lastRef.current = { wei: totalWei, description: desc };
+      await add.addExpense(groupId, totalWei, parts, shares, desc, usdCents);
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Could not create expense");
     }
   };
 
-  // Close after a confirmed tx.
   useEffect(() => {
     if (!add.isConfirmed) return;
+    if (add.hash && lastRef.current) {
+      logActivity(groupId, {
+        id: `${add.hash}-expense`,
+        kind: "expense",
+        txHash: add.hash,
+        ts: Date.now(),
+        payer: address,
+        amount: lastRef.current.wei.toString(),
+        description: lastRef.current.description,
+      });
+    }
     const t = setTimeout(() => {
       add.reset();
       onAdded();
       onClose();
     }, 1200);
     return () => clearTimeout(t);
-  }, [add.isConfirmed, add, onAdded, onClose]);
+  }, [add.isConfirmed, add, onAdded, onClose, groupId, address]);
 
   const busyTx = add.isPending || add.isConfirming;
   const monText = totalWei > 0n ? `${formatMon(totalWei)} MON` : "—";
@@ -240,29 +275,6 @@ export function ReceiptScanner({ groupId, members, onAdded, onClose }: ReceiptSc
 
       {items && (
         <div className="space-y-3">
-          {/* Unit toggle */}
-          <div className="flex items-center gap-2 text-xs">
-            <span className="text-slate-400">Detected {currency}. Split in:</span>
-            {(["USD", "MON"] as const).map((u) => (
-              <button
-                key={u}
-                type="button"
-                onClick={() => setUnit(u)}
-                className={cn(
-                  "rounded-full border px-2.5 py-1 font-mono transition",
-                  unit === u
-                    ? "border-brand-500 bg-brand-500/10 text-brand-600 dark:text-brand-300"
-                    : "border-slate-200 text-slate-400 dark:border-slate-700"
-                )}
-              >
-                {u}
-              </button>
-            ))}
-            {unit === "USD" && !price.isLive && (
-              <span className="text-[11px] text-amber-500">· using fallback rate</span>
-            )}
-          </div>
-
           {/* Items with per-item assignment */}
           <div className="space-y-2">
             {items.map((it, idx) => (
@@ -323,6 +335,47 @@ export function ReceiptScanner({ groupId, members, onAdded, onClose }: ReceiptSc
             ))}
           </div>
 
+          {/* Bill total + unit — decouples receipt currency from the onchain amount */}
+          <div className="rounded-xl border border-slate-200 p-3 dark:border-slate-800">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">
+                  Bill total {currency !== "USD" && currency !== "MON" && (
+                    <span className="text-slate-400">(receipt was {currency})</span>
+                  )}
+                </label>
+                <p className="text-[11px] text-slate-400">What the group actually pays, split by the items above.</p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  value={billTotal}
+                  onChange={(e) => setBillTotal(e.target.value.replace(/[^0-9.]/g, ""))}
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  className="w-24 rounded-md border border-slate-200 bg-white px-2 py-1 text-right font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
+                />
+                {(["USD", "MON"] as const).map((u) => (
+                  <button
+                    key={u}
+                    type="button"
+                    onClick={() => setUnit(u)}
+                    className={cn(
+                      "rounded-md px-1.5 py-1 text-[10px] font-mono font-semibold transition",
+                      unit === u
+                        ? "bg-brand-500/15 text-brand-600 dark:text-brand-300"
+                        : "text-slate-400 hover:text-slate-500"
+                    )}
+                  >
+                    {u}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {unit === "USD" && !price.isLive && (
+              <p className="mt-1 text-right text-[11px] text-amber-500">using fallback MON/USD rate</p>
+            )}
+          </div>
+
           {/* Per-person summary */}
           <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-950/60">
             <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
@@ -330,13 +383,13 @@ export function ReceiptScanner({ groupId, members, onAdded, onClose }: ReceiptSc
             </div>
             <div className="space-y-1">
               {members.map((m) => {
-                const sub = subtotals.get(m.toLowerCase()) ?? 0;
-                if (sub <= 0) return null;
+                const portion = portionOf(m);
+                if (portion <= 0) return null;
                 return (
                   <div key={m} className="flex items-center justify-between text-sm">
                     <Identity address={m} you={sameAddress(m, address)} compact />
                     <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                      {unit === "USD" ? formatUsd(sub) : `${sub.toFixed(4)} MON`}
+                      {unit === "USD" ? formatUsd(portion) : `${portion.toFixed(4)} MON`}
                     </span>
                   </div>
                 );
