@@ -92,12 +92,13 @@ export function useAddExpense() {
       amount: bigint,
       participants: `0x${string}`[],
       shares: bigint[],
-      description: string
+      description: string,
+      usdCents = 0n
     ) => {
       return w.writeContractAsync({
         ...base,
         functionName: "addExpense",
-        args: [groupId, amount, participants, shares, description],
+        args: [groupId, amount, participants, shares, description, usdCents],
       });
     },
     [w]
@@ -119,6 +120,40 @@ export function useSettle() {
     [w]
   );
   return { ...w, settle };
+}
+
+/** Batch settle: clear multiple debts in a single onchain transaction. */
+export function useSettleMany() {
+  const w = useWrite();
+  const settleMany = useCallback(
+    async (groupId: bigint, tos: `0x${string}`[], amounts: bigint[]) => {
+      const value = amounts.reduce((a, b) => a + b, 0n);
+      return w.writeContractAsync({
+        ...base,
+        functionName: "settleMany",
+        args: [groupId, tos, amounts],
+        value,
+      });
+    },
+    [w]
+  );
+  return { ...w, settleMany };
+}
+
+/** Self-join a group via a shared invite link. */
+export function useJoinGroup() {
+  const w = useWrite();
+  const joinGroup = useCallback(
+    async (groupId: bigint) => {
+      return w.writeContractAsync({
+        ...base,
+        functionName: "joinGroup",
+        args: [groupId],
+      });
+    },
+    [w]
+  );
+  return { ...w, joinGroup };
 }
 
 /** Decode the groupId from a createGroup receipt's GroupCreated event. */

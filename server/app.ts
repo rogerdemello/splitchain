@@ -7,15 +7,24 @@
  */
 
 import express, { type Express } from "express";
+import { registerReceiptRoute } from "./routes/receipt";
 
 export function buildApp(): Express {
   const app = express();
 
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({ limit: "8mb" }));
 
   app.get("/api/health", (_req, res) => {
-    res.json({ status: "ok", app: "splitchain", chain: "monad-testnet" });
+    res.json({
+      status: "ok",
+      app: "splitchain",
+      chain: "monad-testnet",
+      receiptScan: Boolean(process.env.NVIDIA_API_KEY),
+    });
   });
+
+  // AI receipt scanner (optional — degrades to manual entry if no key).
+  registerReceiptRoute(app);
 
   return app;
 }

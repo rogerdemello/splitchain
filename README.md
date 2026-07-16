@@ -1,14 +1,25 @@
 # SplitChain — settle group expenses onchain
 
-Split rent, trips and dinners with friends, then **settle who owes whom with real
-MON on Monad**. No spreadsheets, no "I'll Venmo you later," no chasing people for
-weeks. The debts live onchain; clearing one is a single transaction.
+**Snap a receipt, split it with friends, and clear every debt in one tap with real
+MON on Monad.** No spreadsheets, no "I'll Venmo you later," no chasing people for
+weeks. The debts live onchain; clearing them all is a single transaction.
 
 > Built for the **Spark** hackathon (BuildAnything × Monad). Runs on **Monad Testnet**.
 
 - **Live app:** **https://splitchain.onrender.com**
-- **Contract (Monad testnet):** [`0x84d57b45A20267f9da4904c7c615aAadDd1FD754`](https://testnet.monadscan.com/address/0x84d57b45A20267f9da4904c7c615aAadDd1FD754)
+- **Contract (Monad testnet):** [`0x2e6a327bbEe6713C3176646Dc9670d99F4321Aa0`](https://testnet.monadscan.com/address/0x2e6a327bbEe6713C3176646Dc9670d99F4321Aa0)
 - **Demo video:** _<add your ≤3-min video URL>_
+
+### What makes it special
+
+- **📸 AI receipt scanner** — photograph the bill; a vision model reads the line
+  items, you tap who had what, and the split is recorded onchain. No manual math.
+- **⚡ One-click settle-all** — owe three people? Clear every debt in a **single**
+  transaction (`settleMany`), showcasing Monad's cheap, fast execution.
+- **💵 Think in dollars** — enter "$40", not "18.3 MON". Live MON/USD from a Pyth
+  price feed; the ledger and settlement stay in MON.
+- **🔗 Invite links** — friends join a group by tapping a link (`joinGroup`), no
+  copy-pasting addresses.
 
 ---
 
@@ -63,15 +74,27 @@ trust-critical part — the money — is fully onchain. The contract enforces
 | Function | What it does |
 |---|---|
 | `createGroup(name, members[])` | Create a group; caller is auto-added. |
-| `addExpense(groupId, amount, participants[], shares[], description)` | Log an expense the caller paid; updates net balances. |
-| `settle(groupId, to)` **payable** | Pay a creditor real MON; balances move toward zero. |
+| `joinGroup(groupId)` | Self-join via an invite link (idempotent). |
+| `addExpense(groupId, amount, participants[], shares[], description, usdCents)` | Log an expense the caller paid; updates net balances. `usdCents` is display-only. |
+| `settle(groupId, to)` **payable** | Pay one creditor real MON; balances move toward zero. |
+| `settleMany(groupId, tos[], amounts[])` **payable** | Clear **multiple** debts in one tx; `sum(amounts) == msg.value`. |
 | `getBalances(groupId)` | Members + signed net balances (drives the UI). |
 | `getExpenses(groupId)` / `getGroup(groupId)` | Expense log / group metadata. |
 
 Guards: members-only writes, `sum(shares) == amount`, checks-effects-interactions
-plus a reentrancy lock on `settle`. Events (`GroupCreated`, `ExpenseAdded`,
-`DebtSettled`) power the activity view. Invariant: per group, all net balances
-sum to zero.
+plus a reentrancy lock on both `settle` and `settleMany`. Events (`GroupCreated`,
+`MemberJoined`, `ExpenseAdded`, `DebtSettled`) power the activity view. Invariant:
+per group, all net balances sum to zero. **14 passing tests** cover splits,
+`settleMany`, `joinGroup`, and every guard.
+
+### AI receipt scanner — `server/routes/receipt.ts`
+
+`POST /api/receipt/scan` sends a photo to NVIDIA NIM's vision model
+(`llama-3.2-11b-vision-instruct`, OpenAI-compatible) and returns structured line
+items. The amounts are always reviewed/edited by the user before anything is
+written onchain, and if no `NVIDIA_API_KEY` is set (or the read fails) the UI
+falls back to manual entry — it never fabricates data. Set `NVIDIA_API_KEY` in
+`.env` to enable it.
 
 ---
 

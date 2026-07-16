@@ -2,43 +2,73 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { Link2, ArrowLeft, ExternalLink, Copy, Check, AlertTriangle } from "lucide-react";
+import {
+  Link2,
+  ArrowLeft,
+  ExternalLink,
+  Copy,
+  Check,
+  AlertTriangle,
+  Share2,
+  UserPlus,
+} from "lucide-react";
 import { ConnectButton } from "@/components/ConnectButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { GroupGate } from "@/components/GroupGate";
 import { ExpenseForm } from "@/components/ExpenseForm";
 import { Balances } from "@/components/Balances";
 import { ExpenseHistory } from "@/components/ExpenseHistory";
+import { Insights } from "@/components/Insights";
+import { TxStatus } from "@/components/TxStatus";
 import {
   useGroupBalances,
   useGroupInfo,
   useGroupExpenses,
+  useJoinGroup,
 } from "@/lib/web3/hooks";
+import { usePrice, formatUsd } from "@/lib/web3/price";
 import { SPLITCHAIN_ADDRESS, isContractConfigured } from "@/lib/contract";
 import { explorerAddress } from "@/lib/web3/chains";
 import { formatMon, shortAddress, sameAddress } from "@/lib/format";
 
 export default function Home() {
   const { address, isConnected } = useAccount();
+  const price = usePrice();
   const [groupId, setGroupId] = useState<bigint | null>(null);
   const [copied, setCopied] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState(false);
 
-  // Restore last group per browser.
+  const selectGroup = useCallback((id: bigint) => {
+    setGroupId(id);
+    localStorage.setItem("splitchain:group", id.toString());
+  }, []);
+
+  // Restore last group, or open one from an ?join=<id> invite link.
   useEffect(() => {
-    const saved = typeof window !== "undefined" ? localStorage.getItem("splitchain:group") : null;
-    if (saved !== null && saved !== "") {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const invite = params.get("join");
+    if (invite) {
+      try {
+        selectGroup(BigInt(invite));
+      } catch {
+        /* ignore */
+      }
+      // Clean the URL so a refresh doesn't re-trigger.
+      params.delete("join");
+      const q = params.toString();
+      window.history.replaceState({}, "", q ? `/?${q}` : "/");
+      return;
+    }
+    const saved = localStorage.getItem("splitchain:group");
+    if (saved) {
       try {
         setGroupId(BigInt(saved));
       } catch {
         /* ignore */
       }
     }
-  }, []);
-
-  const selectGroup = useCallback((id: bigint) => {
-    setGroupId(id);
-    localStorage.setItem("splitchain:group", id.toString());
-  }, []);
+  }, [selectGroup]);
 
   const leaveGroup = useCallback(() => {
     setGroupId(null);
@@ -54,6 +84,15 @@ export default function Home() {
     infoQ.refetch();
     expensesQ.refetch();
   }, [balancesQ, infoQ, expensesQ]);
+
+  const join = useJoinGroup();
+  useEffect(() => {
+    if (join.isConfirmed) {
+      refetchAll();
+      const t = setTimeout(() => join.reset(), 1500);
+      return () => clearTimeout(t);
+    }
+  }, [join.isConfirmed, join, refetchAll]);
 
   const bData = balancesQ.data as
     | readonly [readonly `0x${string}`[], readonly bigint[]]
@@ -71,6 +110,7 @@ export default function Home() {
     shares: readonly bigint[];
     description: string;
     timestamp: bigint;
+    amountUsdCents: bigint;
   }[];
 
   const myNet = useMemo(() => {
@@ -78,8 +118,20 @@ export default function Home() {
     return idx >= 0 ? balances[idx] ?? 0n : 0n;
   }, [members, balances, address]);
 
+  const iAmMember = useMemo(
+    () => isConnected && members.some((m) => sameAddress(m, address)),
+    [isConnected, members, address]
+  );
+
   const groupNotFound =
     groupId !== null && !balancesQ.isLoading && balancesQ.isError;
+
+  const copyInvite = () => {
+    if (groupId === null) return;
+    navigator.clipboard.writeText(`${window.location.origin}/?join=${groupId.toString()}`);
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 1500);
+  };
 
   return (
     <div className="min-h-screen">
@@ -120,11 +172,16 @@ export default function Home() {
               Who owes whom, <span className="text-brand-500">settled onchain.</span>
             </h2>
             <p className="mx-auto mt-3 max-w-md text-sm text-slate-500 dark:text-slate-400">
-              Split rent, trips and dinners with friends. SplitChain tracks the balances and
-              lets you clear your debts with real MON — no more awkward reminders.
+              Snap a receipt, split it with friends, and clear every debt in one tap with real
+              MON. No spreadsheets, no chasing — the balances live on Monad.
             </p>
             <div className="mt-6 flex justify-center">
               <ConnectButton />
+            </div>
+            <div className="mx-auto mt-8 grid max-w-md grid-cols-3 gap-3 text-left">
+              <Feature emoji="📸" title="Scan receipts" sub="AI reads the bill" />
+              <Feature emoji="⚡" title="Settle all" sub="one transaction" />
+              <Feature emoji="💵" title="In dollars" sub="live MON price" />
             </div>
           </section>
         ) : groupId === null ? (
@@ -166,9 +223,19 @@ export default function Home() {
                 <h2 className="text-xl font-bold text-slate-900 dark:text-white">
                   {groupName || `Group #${groupId.toString()}`}
                 </h2>
-                <p className="font-mono text-xs text-slate-400">
-                  #{groupId.toString()} · {members.length} member{members.length === 1 ? "" : "s"}
-                </p>
+                <div className="flex items-center gap-3">
+                  <p className="font-mono text-xs text-slate-400">
+                    #{groupId.toString()} · {members.length} member{members.length === 1 ? "" : "s"}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={copyInvite}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-brand-500 hover:text-brand-600"
+                  >
+                    {inviteCopied ? <Check className="h-3 w-3" /> : <Share2 className="h-3 w-3" />}
+                    {inviteCopied ? "Link copied" : "Invite"}
+                  </button>
+                </div>
               </div>
               <div className="text-right">
                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Your position</p>
@@ -180,22 +247,60 @@ export default function Home() {
                   {myNet > 0n ? `+${formatMon(myNet)}` : formatMon(myNet)} MON
                 </p>
                 <p className="text-xs text-slate-400">
-                  {myNet > 0n ? "you're owed" : myNet < 0n ? "you owe" : "all settled"}
+                  {myNet === 0n
+                    ? "all settled"
+                    : `${myNet > 0n ? "you're owed" : "you owe"} · ≈ ${formatUsd(
+                        price.weiToUsd(myNet < 0n ? -myNet : myNet)
+                      )}`}
                 </p>
               </div>
             </div>
 
+            {/* Invited but not yet a member */}
+            {!iAmMember && (
+              <div className="flex flex-col gap-3 rounded-2xl border border-brand-500/40 bg-brand-500/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
+                  <UserPlus className="h-4 w-4 text-brand-500" />
+                  You&apos;re viewing this group but haven&apos;t joined yet.
+                </div>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => join.joinGroup(groupId)}
+                    disabled={join.isPending || join.isConfirming}
+                    className="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-600 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700"
+                  >
+                    <UserPlus className="h-4 w-4" />
+                    {join.isPending || join.isConfirming ? "Joining…" : "Join group"}
+                  </button>
+                  <TxStatus
+                    className="mt-2"
+                    hash={join.hash}
+                    isPending={join.isPending}
+                    isConfirming={join.isConfirming}
+                    isConfirmed={join.isConfirmed}
+                    error={join.error}
+                  />
+                </div>
+              </div>
+            )}
+
             <div className="grid gap-5 lg:grid-cols-2">
               <div className="space-y-5">
-                <ExpenseForm groupId={groupId} members={members} onAdded={refetchAll} />
+                {iAmMember && (
+                  <ExpenseForm groupId={groupId} members={members} onAdded={refetchAll} />
+                )}
                 <ExpenseHistory expenses={expenses} />
               </div>
-              <Balances
-                groupId={groupId}
-                members={members}
-                balances={balances}
-                onSettled={refetchAll}
-              />
+              <div className="space-y-5">
+                <Balances
+                  groupId={groupId}
+                  members={members}
+                  balances={balances}
+                  onSettled={refetchAll}
+                />
+                <Insights members={members} expenses={expenses} />
+              </div>
             </div>
           </section>
         )}
@@ -230,6 +335,16 @@ export default function Home() {
           <span>SplitChain · Monad Testnet</span>
         )}
       </footer>
+    </div>
+  );
+}
+
+function Feature({ emoji, title, sub }: { emoji: string; title: string; sub: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/50 p-3 text-center dark:border-slate-800 dark:bg-slate-900/50">
+      <div className="text-xl">{emoji}</div>
+      <div className="mt-1 text-xs font-semibold text-slate-700 dark:text-slate-200">{title}</div>
+      <div className="text-[11px] text-slate-400">{sub}</div>
     </div>
   );
 }

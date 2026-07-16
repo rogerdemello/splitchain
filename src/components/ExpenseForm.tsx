@@ -2,10 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useAccount } from "wagmi";
-import { Receipt, ArrowRight } from "lucide-react";
+import { Receipt, ArrowRight, Camera } from "lucide-react";
 import { useAddExpense } from "@/lib/web3/hooks";
+import { usePrice, formatUsd } from "@/lib/web3/price";
 import { TxStatus } from "@/components/TxStatus";
-import { monToWei, formatMon, shortAddress, sameAddress } from "@/lib/format";
+import { ReceiptScanner } from "@/components/ReceiptScanner";
+import { Identity } from "@/components/Identity";
+import { monToWei, formatMon, sameAddress } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
 interface ExpenseFormProps {
@@ -23,10 +26,13 @@ function computeShares(amount: bigint, n: number): bigint[] {
 
 export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
   const { address } = useAccount();
+  const price = usePrice();
   const [amount, setAmount] = useState("");
+  const [unit, setUnit] = useState<"MON" | "USD">("MON");
   const [description, setDescription] = useState("");
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [formErr, setFormErr] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
 
   const add = useAddExpense();
 
@@ -50,29 +56,39 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
     [members, selected]
   );
 
-  const preview = useMemo(() => {
+  // Resolve the entered amount into MON wei + a usdCents tag.
+  const resolved = useMemo(() => {
     try {
       if (!amount || participants.length === 0) return null;
-      const wei = monToWei(amount);
+      const num = Number(amount);
+      if (!Number.isFinite(num) || num <= 0) return null;
+      let wei: bigint;
+      let usdCents = 0n;
+      if (unit === "USD") {
+        wei = price.usdToWei(num);
+        usdCents = BigInt(Math.round(num * 100));
+      } else {
+        wei = monToWei(amount);
+      }
+      if (wei === 0n) return null;
       const shares = computeShares(wei, participants.length);
-      return { wei, shares, per: shares[0] };
+      return { wei, shares, per: shares[0], usdCents };
     } catch {
       return null;
     }
-  }, [amount, participants.length]);
+  }, [amount, participants.length, unit, price]);
 
   const submit = async () => {
     setFormErr(null);
     try {
-      const wei = monToWei(amount);
-      if (participants.length === 0) throw new Error("Pick at least one participant");
-      const shares = computeShares(wei, participants.length);
+      if (!resolved) throw new Error("Enter an amount and pick participants");
       await add.addExpense(
         groupId,
-        wei,
+        resolved.wei,
         participants as `0x${string}`[],
-        shares,
-        description.trim() || "Expense"
+        resolved.shares,
+        description.trim() || "Expense",
+        resolved.usdCents
       );
     } catch (e) {
       setFormErr(e instanceof Error ? e.message : "Invalid input");
@@ -81,6 +97,17 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
 
   const busy = add.isPending || add.isConfirming;
 
+  if (scanning) {
+    return (
+      <ReceiptScanner
+        groupId={groupId}
+        members={members}
+        onAdded={onAdded}
+        onClose={() => setScanning(false)}
+      />
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
       <div className="mb-4 flex items-center gap-2">
@@ -88,20 +115,53 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
           <Receipt className="h-4 w-4" />
         </div>
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">Add an expense</h2>
+        <button
+          type="button"
+          onClick={() => setScanning(true)}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-brand-500/40 bg-brand-500/5 px-2.5 py-1.5 text-xs font-semibold text-brand-600 transition hover:bg-brand-500/10 dark:text-brand-300"
+        >
+          <Camera className="h-3.5 w-3.5" /> Scan receipt
+        </button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
-          <label className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
-            Amount (MON)
-          </label>
+          <div className="mb-1 flex items-center justify-between">
+            <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">
+              Amount
+            </label>
+            <div className="flex gap-1">
+              {(["MON", "USD"] as const).map((u) => (
+                <button
+                  key={u}
+                  type="button"
+                  onClick={() => setUnit(u)}
+                  className={cn(
+                    "rounded-md px-1.5 py-0.5 text-[10px] font-mono font-semibold transition",
+                    unit === u
+                      ? "bg-brand-500/15 text-brand-600 dark:text-brand-300"
+                      : "text-slate-400 hover:text-slate-500"
+                  )}
+                >
+                  {u}
+                </button>
+              ))}
+            </div>
+          </div>
           <input
             value={amount}
             onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
             inputMode="decimal"
-            placeholder="0.0"
+            placeholder={unit === "USD" ? "$0.00" : "0.0"}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none ring-brand-500/30 focus:ring-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
           />
+          {resolved && (
+            <p className="mt-1 font-mono text-[11px] text-slate-400">
+              {unit === "USD"
+                ? `≈ ${formatMon(resolved.wei)} MON`
+                : `≈ ${formatUsd(price.weiToUsd(resolved.wei))}`}
+            </p>
+          )}
         </div>
         <div>
           <label className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">
@@ -121,9 +181,9 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Split between
           </label>
-          {preview && (
+          {resolved && (
             <span className="font-mono text-xs text-slate-400">
-              {formatMon(preview.per)} MON each
+              {formatMon(resolved.per)} MON each
             </span>
           )}
         </div>
@@ -138,13 +198,13 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
                   setSelected((p) => ({ ...p, [m.toLowerCase()]: !p[m.toLowerCase()] }))
                 }
                 className={cn(
-                  "rounded-full border px-2.5 py-1 font-mono text-xs transition",
+                  "rounded-full border px-2 py-1 transition",
                   on
-                    ? "border-brand-500 bg-brand-500/10 text-brand-600 dark:text-brand-300"
-                    : "border-slate-200 text-slate-400 dark:border-slate-700"
+                    ? "border-brand-500 bg-brand-500/10"
+                    : "border-slate-200 opacity-50 dark:border-slate-700"
                 )}
               >
-                {sameAddress(m, address) ? "You" : shortAddress(m)}
+                <Identity address={m} you={sameAddress(m, address)} compact />
               </button>
             );
           })}
@@ -156,10 +216,10 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
       <button
         type="button"
         onClick={submit}
-        disabled={busy || !preview}
+        disabled={busy || !resolved}
         className={cn(
           "mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition",
-          busy || !preview ? "cursor-not-allowed bg-slate-300 dark:bg-slate-700" : "bg-brand-500 hover:bg-brand-600"
+          busy || !resolved ? "cursor-not-allowed bg-slate-300 dark:bg-slate-700" : "bg-brand-500 hover:bg-brand-600"
         )}
       >
         Record expense <ArrowRight className="h-4 w-4" />
