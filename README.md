@@ -6,7 +6,7 @@ weeks. The debts live onchain; clearing one is a single transaction.
 
 > Built for the **Spark** hackathon (BuildAnything × Monad). Runs on **Monad Testnet**.
 
-- **Live app:** _<add your hosted URL>_
+- **Live app:** **https://splitchain.onrender.com**
 - **Contract (Monad testnet):** [`0x84d57b45A20267f9da4904c7c615aAadDd1FD754`](https://testnet.monadscan.com/address/0x84d57b45A20267f9da4904c7c615aAadDd1FD754)
 - **Demo video:** _<add your ≤3-min video URL>_
 
