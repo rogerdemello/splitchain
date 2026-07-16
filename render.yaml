@@ -14,5 +14,9 @@ services:
       # NEXT_PUBLIC_* is inlined at build time, so a redeploy is needed on change.
       - key: NEXT_PUBLIC_SPLITCHAIN_ADDRESS
         sync: false
+      # NVIDIA NIM key for the AI receipt scanner. Optional — the app falls back
+      # to manual entry if unset. Set it in the Render dashboard (kept secret).
+      - key: NVIDIA_API_KEY
+        sync: false
       - key: NODE_VERSION
         value: "20"
