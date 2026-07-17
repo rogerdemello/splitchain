@@ -8,18 +8,21 @@ weeks. The debts live onchain; clearing them all is a single transaction.
 
 - **Live app:** **https://splitchain.onrender.com**
 - **Contract (Monad testnet):** [`0x2e6a327bbEe6713C3176646Dc9670d99F4321Aa0`](https://testnet.monadscan.com/address/0x2e6a327bbEe6713C3176646Dc9670d99F4321Aa0)
-- **Demo video:** _<add your ≤3-min video URL>_
+- **Demo video:** _<add your ≤3-min video URL>_ — see [DEMO.md](./DEMO.md) for the script + setup.
 
 ### What makes it special
 
 - **📸 AI receipt scanner** — photograph the bill; a vision model reads the line
-  items, you tap who had what, and the split is recorded onchain. No manual math.
+  items, you tap who had what, and the split is recorded onchain. Works with a
+  receipt in **any currency** — the items set the proportions, you set the total.
 - **⚡ One-click settle-all** — owe three people? Clear every debt in a **single**
   transaction (`settleMany`), showcasing Monad's cheap, fast execution.
 - **💵 Think in dollars** — enter "$40", not "18.3 MON". Live MON/USD from a Pyth
   price feed; the ledger and settlement stay in MON.
-- **🔗 Invite links** — friends join a group by tapping a link (`joinGroup`), no
-  copy-pasting addresses.
+- **🔗 Invite links + QR** — friends join a group by tapping a link or scanning a
+  QR code (`joinGroup`), no copy-pasting addresses.
+- **📊 Live onchain activity** — every expense, settlement and join appears in a
+  feed, each linking to its real transaction on the Monad explorer.
 
 ---
 
