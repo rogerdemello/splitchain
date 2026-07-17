@@ -21,6 +21,22 @@ const NIM_MODEL = process.env.RECEIPT_MODEL || "meta/llama-3.2-11b-vision-instru
 // NIM inlines images as base64 in the message; keep under its ~180KB limit.
 const MAX_B64 = 180_000;
 
+// Simple in-memory per-IP rate limit so the shared NVIDIA key can't be drained.
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 10;
+const hits = new Map<string, number[]>();
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const recent = (hits.get(ip) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  recent.push(now);
+  hits.set(ip, recent);
+  // Opportunistic cleanup so the map doesn't grow unbounded.
+  if (hits.size > 5000) {
+    for (const [k, v] of hits) if (v.every((t) => now - t >= RATE_WINDOW_MS)) hits.delete(k);
+  }
+  return recent.length > RATE_MAX;
+}
+
 interface ScanItem {
   name: string;
   amountUsd: number;
@@ -74,6 +90,16 @@ function extractJson(text: string): ScanResult | null {
 
 export function registerReceiptRoute(app: Express): void {
   app.post("/api/receipt/scan", async (req: Request, res: Response) => {
+    const fwd = req.headers["x-forwarded-for"];
+    const ip = (
+      (Array.isArray(fwd) ? fwd[0] : fwd?.split(",")[0]) ||
+      req.socket.remoteAddress ||
+      "unknown"
+    ).trim();
+    if (isRateLimited(ip)) {
+      return res.status(429).json({ ok: false, reason: "rate-limited" });
+    }
+
     const apiKey = process.env.NVIDIA_API_KEY;
     if (!apiKey) {
       return res.status(200).json({ ok: false, reason: "no-key" });

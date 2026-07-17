@@ -118,7 +118,9 @@ export function ReceiptScanner({ groupId, members, onAdded, onClose }: ReceiptSc
         setErr(
           data.reason === "no-key"
             ? "Receipt AI isn't configured — add items manually instead."
-            : "Couldn't read that receipt. Try a clearer photo or add items manually."
+            : data.reason === "rate-limited"
+              ? "Too many scans in a short time — wait a minute and try again."
+              : "Couldn't read that receipt. Try a clearer photo or add items manually."
         );
         return;
       }

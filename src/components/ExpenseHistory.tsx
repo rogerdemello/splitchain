@@ -1,9 +1,11 @@
 "use client";
 
 import { useAccount } from "wagmi";
-import { ScrollText } from "lucide-react";
+import { ScrollText, Download } from "lucide-react";
 import { usePrice, formatUsd } from "@/lib/web3/price";
 import { Identity } from "@/components/Identity";
+import { useLocalActivity } from "@/lib/activity";
+import { downloadLedgerCsv } from "@/lib/csv";
 import { formatMon } from "@/lib/format";
 
 interface ExpenseItem {
@@ -16,9 +18,16 @@ interface ExpenseItem {
   amountUsdCents?: bigint;
 }
 
-export function ExpenseHistory({ expenses }: { expenses: readonly ExpenseItem[] }) {
+interface ExpenseHistoryProps {
+  expenses: readonly ExpenseItem[];
+  groupId?: bigint;
+  groupName?: string;
+}
+
+export function ExpenseHistory({ expenses, groupId, groupName }: ExpenseHistoryProps) {
   const { address } = useAccount();
   const price = usePrice();
+  const activity = useLocalActivity(groupId);
 
   const usdLabel = (e: ExpenseItem) =>
     e.amountUsdCents && e.amountUsdCents > 0n
@@ -32,7 +41,19 @@ export function ExpenseHistory({ expenses }: { expenses: readonly ExpenseItem[] 
           <ScrollText className="h-4 w-4" />
         </div>
         <h2 className="text-base font-semibold text-slate-900 dark:text-white">Expenses</h2>
-        <span className="ml-auto text-xs text-slate-400">{expenses.length} logged</span>
+        {expenses.length > 0 && (
+          <button
+            type="button"
+            onClick={() => downloadLedgerCsv(groupName || "splitchain", expenses, activity)}
+            className="ml-auto inline-flex items-center gap-1 text-xs text-slate-400 transition hover:text-brand-500"
+            title="Export the group ledger as CSV"
+          >
+            <Download className="h-3.5 w-3.5" /> CSV
+          </button>
+        )}
+        <span className={expenses.length > 0 ? "text-xs text-slate-400" : "ml-auto text-xs text-slate-400"}>
+          {expenses.length} logged
+        </span>
       </div>
 
       {expenses.length === 0 ? (

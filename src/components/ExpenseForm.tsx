@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useAccount } from "wagmi";
-import { Receipt, ArrowRight, Camera } from "lucide-react";
+import { Receipt, ArrowRight, Camera, Repeat, X } from "lucide-react";
 import { useAddExpense } from "@/lib/web3/hooks";
 import { usePrice, formatUsd } from "@/lib/web3/price";
 import { TxStatus } from "@/components/TxStatus";
 import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { Identity } from "@/components/Identity";
 import { logActivity } from "@/lib/activity";
+import { useTemplates, saveTemplate, removeTemplate } from "@/lib/templates";
 import { monToWei, formatMon, sameAddress } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
@@ -37,6 +38,27 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
 
   const add = useAddExpense();
   const lastRef = useRef<{ wei: bigint; description: string } | null>(null);
+  const templates = useTemplates(groupId);
+
+  const applyTemplate = (t: { description: string; amount: string; unit: "MON" | "USD"; participants: string[] }) => {
+    setDescription(t.description);
+    setAmount(t.amount);
+    setUnit(t.unit);
+    const set: Record<string, boolean> = {};
+    for (const m of members) set[m.toLowerCase()] = t.participants.includes(m.toLowerCase());
+    // If the saved participants don't match this group, fall back to everyone.
+    setSelected(Object.values(set).some(Boolean) ? set : Object.fromEntries(members.map((m) => [m.toLowerCase(), true])));
+  };
+
+  const saveCurrent = () => {
+    if (!amount) return;
+    saveTemplate(groupId, {
+      description: description.trim() || "Expense",
+      amount,
+      unit,
+      participants: participants.map((m) => m.toLowerCase()),
+    });
+  };
 
   // Default: everyone shares the expense.
   useEffect(() => {
@@ -139,6 +161,39 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
         </button>
       </div>
 
+      {templates.length > 0 && (
+        <div className="mb-3">
+          <p className="mb-1 flex items-center gap-1 text-[11px] font-medium text-slate-400">
+            <Repeat className="h-3 w-3" /> Recurring
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {templates.map((t) => (
+              <span
+                key={t.id}
+                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 py-1 pl-2.5 pr-1 text-xs dark:border-slate-700 dark:bg-slate-950/60"
+              >
+                <button
+                  type="button"
+                  onClick={() => applyTemplate(t)}
+                  className="font-medium text-slate-600 hover:text-brand-500 dark:text-slate-300"
+                  title="Fill the form with this"
+                >
+                  {t.description} · {t.amount} {t.unit}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => removeTemplate(groupId, t.id)}
+                  className="text-slate-300 hover:text-debit-500"
+                  aria-label="Remove template"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2">
         <div>
           <div className="mb-1 flex items-center justify-between">
@@ -239,6 +294,15 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
       >
         Record expense <ArrowRight className="h-4 w-4" />
       </button>
+      {amount && (
+        <button
+          type="button"
+          onClick={saveCurrent}
+          className="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-400 hover:text-brand-500"
+        >
+          <Repeat className="h-3 w-3" /> Save as recurring
+        </button>
+      )}
       <TxStatus
         className="mt-3"
         hash={add.hash}

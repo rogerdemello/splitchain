@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAccount } from "wagmi";
-import { ArrowRight, Scale, PartyPopper, Zap } from "lucide-react";
+import { ArrowRight, Scale, PartyPopper, Zap, Bell, Check } from "lucide-react";
 import { simplifyDebts, type Transfer } from "@/lib/web3/simplify";
 import { SettleButton } from "@/components/SettleButton";
 import { TxStatus } from "@/components/TxStatus";
@@ -17,12 +17,29 @@ interface BalancesProps {
   groupId: bigint;
   members: readonly `0x${string}`[];
   balances: readonly bigint[];
+  groupName?: string;
   onSettled: () => void;
 }
 
-export function Balances({ groupId, members, balances, onSettled }: BalancesProps) {
+export function Balances({ groupId, members, balances, groupName, onSettled }: BalancesProps) {
   const { address } = useAccount();
   const price = usePrice();
+  const [remindedKey, setRemindedKey] = useState<string | null>(null);
+
+  const remind = (t: Transfer) => {
+    const url = `${window.location.origin}/?join=${groupId.toString()}`;
+    const where = groupName ? ` in ${groupName}` : "";
+    const msg = `You owe me ${formatMon(t.amount)} MON${where} on SplitChain. Settle up here: ${url}`;
+    const key = `${t.from}-${t.to}`;
+    const nav = navigator as Navigator & { share?: (d: { text: string; url?: string }) => Promise<void> };
+    if (typeof nav.share === "function") {
+      nav.share({ text: msg, url }).catch(() => {});
+    } else {
+      navigator.clipboard.writeText(msg);
+      setRemindedKey(key);
+      setTimeout(() => setRemindedKey(null), 2000);
+    }
+  };
 
   const transfers = useMemo(
     () => simplifyDebts(members.map((m, i) => ({ address: m, balance: balances[i] ?? 0n }))),
@@ -198,10 +215,27 @@ export function Balances({ groupId, members, balances, onSettled }: BalancesProp
                     amount={t.amount}
                     onSettled={onSettled}
                   />
+                ) : sameAddress(t.to, address) ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs text-slate-400">They owe you — give them a nudge.</p>
+                    <button
+                      type="button"
+                      onClick={() => remind(t)}
+                      className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-brand-500/40 bg-brand-500/5 px-2.5 py-1.5 text-xs font-semibold text-brand-600 transition hover:bg-brand-500/10 dark:text-brand-300"
+                    >
+                      {remindedKey === `${t.from}-${t.to}` ? (
+                        <>
+                          <Check className="h-3.5 w-3.5" /> Copied
+                        </>
+                      ) : (
+                        <>
+                          <Bell className="h-3.5 w-3.5" /> Remind
+                        </>
+                      )}
+                    </button>
+                  </div>
                 ) : (
-                  <p className="text-xs text-slate-400">
-                    Waiting on this person to settle.
-                  </p>
+                  <p className="text-xs text-slate-400">Waiting on this person to settle.</p>
                 )}
               </div>
             );

@@ -2,12 +2,14 @@
 
 import { Activity as ActivityIcon, HandCoins, Receipt, UserPlus, Users, ExternalLink } from "lucide-react";
 import { useLocalActivity, type ActivityItem } from "@/lib/activity";
+import { useSyncOnchainActivity } from "@/lib/web3/hooks";
 import { Identity } from "@/components/Identity";
 import { explorerTx } from "@/lib/web3/chains";
 import { formatMon } from "@/lib/format";
 
 /** Activity feed for a group — each entry links to its real Monad tx. */
 export function Activity({ groupId }: { groupId: bigint }) {
+  useSyncOnchainActivity(groupId); // merge recent on-chain events from other devices
   const items = useLocalActivity(groupId);
 
   return (

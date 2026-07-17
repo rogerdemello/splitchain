@@ -298,13 +298,14 @@ export default function Home() {
                 {iAmMember && (
                   <ExpenseForm groupId={groupId} members={members} onAdded={refetchAll} />
                 )}
-                <ExpenseHistory expenses={expenses} />
+                <ExpenseHistory expenses={expenses} groupId={groupId} groupName={groupName} />
               </div>
               <div className="space-y-5">
                 <Balances
                   groupId={groupId}
                   members={members}
                   balances={balances}
+                  groupName={groupName}
                   onSettled={refetchAll}
                 />
                 <Insights members={members} expenses={expenses} />
