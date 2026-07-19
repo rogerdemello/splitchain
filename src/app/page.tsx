@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useChainId, useSwitchChain } from "wagmi";
 import {
   Link2,
   ArrowLeft,
@@ -33,11 +33,14 @@ import {
 } from "@/lib/web3/hooks";
 import { usePrice, formatUsd } from "@/lib/web3/price";
 import { SPLITCHAIN_ADDRESS, isContractConfigured } from "@/lib/contract";
-import { explorerAddress } from "@/lib/web3/chains";
+import { explorerAddress, monadTestnet } from "@/lib/web3/chains";
 import { formatMon, shortAddress, sameAddress } from "@/lib/format";
 
 export default function Home() {
   const { address, isConnected } = useAccount();
+  const chainId = useChainId();
+  const { switchChain } = useSwitchChain();
+  const wrongNetwork = isConnected && chainId !== monadTestnet.id;
   const price = usePrice();
   const [groupId, setGroupId] = useState<bigint | null>(null);
   const [copied, setCopied] = useState(false);
@@ -171,6 +174,22 @@ export default function Home() {
             Contract address not set. Deploy <code>SplitChain.sol</code> to Monad testnet
             and set <code>NEXT_PUBLIC_SPLITCHAIN_ADDRESS</code> in <code>.env</code>.
           </Banner>
+        )}
+
+        {wrongNetwork && (
+          <div className="mb-6 flex flex-col items-start gap-2 rounded-lg border border-debit-500/40 bg-debit-500/10 px-4 py-3 text-sm text-debit-600 dark:text-debit-300 sm:flex-row sm:items-center sm:justify-between">
+            <span className="flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              You&apos;re on the wrong network. SplitChain runs on Monad Testnet.
+            </span>
+            <button
+              type="button"
+              onClick={() => switchChain({ chainId: monadTestnet.id })}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-debit-500 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-debit-600"
+            >
+              Switch to Monad Testnet
+            </button>
+          </div>
         )}
 
         {/* Not connected — hero */}

@@ -35,6 +35,8 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [formErr, setFormErr] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [splitMode, setSplitMode] = useState<"equal" | "custom">("equal");
+  const [customShares, setCustomShares] = useState<Record<string, string>>({});
 
   const add = useAddExpense();
   const lastRef = useRef<{ wei: bigint; description: string } | null>(null);
@@ -80,6 +82,7 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
       }
       setAmount("");
       setDescription("");
+      setCustomShares({});
       onAdded();
       const t = setTimeout(() => add.reset(), 1500);
       return () => clearTimeout(t);
@@ -91,10 +94,33 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
     [members, selected]
   );
 
-  // Resolve the entered amount into MON wei + a usdCents tag.
+  // Resolve the entered amount(s) into MON wei shares + a usdCents tag.
   const resolved = useMemo(() => {
     try {
-      if (!amount || participants.length === 0) return null;
+      if (participants.length === 0) return null;
+
+      // Custom: each participant owes exactly what you type; total = the sum.
+      if (splitMode === "custom") {
+        const shares: bigint[] = [];
+        let wei = 0n;
+        let usdTotal = 0;
+        for (const m of participants) {
+          const s = (customShares[m.toLowerCase()] ?? "").trim();
+          const num = Number(s);
+          if (!s || !Number.isFinite(num) || num <= 0) return null; // every share required
+          const w = unit === "USD" ? price.usdToWei(num) : monToWei(s);
+          if (w === 0n) return null;
+          shares.push(w);
+          wei += w;
+          usdTotal += num;
+        }
+        if (wei === 0n) return null;
+        const usdCents = unit === "USD" ? BigInt(Math.round(usdTotal * 100)) : 0n;
+        return { wei, shares, per: 0n, usdCents };
+      }
+
+      // Equal: split the entered total evenly.
+      if (!amount) return null;
       const num = Number(amount);
       if (!Number.isFinite(num) || num <= 0) return null;
       let wei: bigint;
@@ -111,7 +137,7 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
     } catch {
       return null;
     }
-  }, [amount, participants.length, unit, price]);
+  }, [amount, participants, splitMode, customShares, unit, price]);
 
   const submit = async () => {
     setFormErr(null);
@@ -218,13 +244,19 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
               ))}
             </div>
           </div>
-          <input
-            value={amount}
-            onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
-            inputMode="decimal"
-            placeholder={unit === "USD" ? "$0.00" : "0.0"}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none ring-brand-500/30 focus:ring-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-          />
+          {splitMode === "custom" ? (
+            <div className="flex h-[38px] w-full items-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 font-mono text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-950/60">
+              {resolved ? `${formatMon(resolved.wei)} MON total` : "sum of shares below"}
+            </div>
+          ) : (
+            <input
+              value={amount}
+              onChange={(e) => setAmount(e.target.value.replace(/[^0-9.]/g, ""))}
+              inputMode="decimal"
+              placeholder={unit === "USD" ? "$0.00" : "0.0"}
+              className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 font-mono text-sm outline-none ring-brand-500/30 focus:ring-2 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+            />
+          )}
           {resolved && (
             <p className="mt-1 font-mono text-[11px] text-slate-400">
               {unit === "USD"
@@ -247,38 +279,92 @@ export function ExpenseForm({ groupId, members, onAdded }: ExpenseFormProps) {
       </div>
 
       <div className="mt-3">
-        <div className="mb-1 flex items-center justify-between">
+        <div className="mb-1.5 flex items-center justify-between">
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
             Split between
           </label>
-          {resolved && (
-            <span className="font-mono text-xs text-slate-400">
-              {formatMon(resolved.per)} MON each
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {splitMode === "equal" && resolved && (
+              <span className="font-mono text-xs text-slate-400">
+                {formatMon(resolved.per)} MON each
+              </span>
+            )}
+            <div className="flex gap-1">
+              {(["equal", "custom"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setSplitMode(mode)}
+                  className={cn(
+                    "rounded-md px-1.5 py-0.5 text-[10px] font-semibold capitalize transition",
+                    splitMode === mode
+                      ? "bg-brand-500/15 text-brand-600 dark:text-brand-300"
+                      : "text-slate-400 hover:text-slate-500"
+                  )}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          {members.map((m) => {
-            const on = !!selected[m.toLowerCase()];
-            return (
-              <button
-                key={m}
-                type="button"
-                onClick={() =>
-                  setSelected((p) => ({ ...p, [m.toLowerCase()]: !p[m.toLowerCase()] }))
-                }
-                className={cn(
-                  "rounded-full border px-2 py-1 transition",
-                  on
-                    ? "border-brand-500 bg-brand-500/10"
-                    : "border-slate-200 opacity-50 dark:border-slate-700"
-                )}
-              >
-                <Identity address={m} you={sameAddress(m, address)} compact />
-              </button>
-            );
-          })}
-        </div>
+
+        {splitMode === "equal" ? (
+          <div className="flex flex-wrap gap-2">
+            {members.map((m) => {
+              const on = !!selected[m.toLowerCase()];
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() =>
+                    setSelected((p) => ({ ...p, [m.toLowerCase()]: !p[m.toLowerCase()] }))
+                  }
+                  className={cn(
+                    "rounded-full border px-2 py-1 transition",
+                    on
+                      ? "border-brand-500 bg-brand-500/10"
+                      : "border-slate-200 opacity-50 dark:border-slate-700"
+                  )}
+                >
+                  <Identity address={m} you={sameAddress(m, address)} compact />
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {members.map((m) => {
+              const key = m.toLowerCase();
+              const on = !!selected[key];
+              return (
+                <div key={m} className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelected((p) => ({ ...p, [key]: !p[key] }))}
+                    className={cn(
+                      "flex-1 rounded-lg border px-2.5 py-1.5 text-left transition",
+                      on ? "border-brand-500 bg-brand-500/5" : "border-slate-200 opacity-50 dark:border-slate-700"
+                    )}
+                  >
+                    <Identity address={m} you={sameAddress(m, address)} compact />
+                  </button>
+                  <input
+                    value={customShares[key] ?? ""}
+                    onChange={(e) =>
+                      setCustomShares((p) => ({ ...p, [key]: e.target.value.replace(/[^0-9.]/g, "") }))
+                    }
+                    disabled={!on}
+                    inputMode="decimal"
+                    placeholder="0.0"
+                    className="w-24 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-right font-mono text-xs outline-none ring-brand-500/30 focus:ring-2 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                  <span className="w-8 text-[10px] font-mono text-slate-400">{unit}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {formErr && <p className="mt-2 text-xs text-debit-500">{formErr}</p>}
